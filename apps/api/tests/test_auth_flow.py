@@ -10,79 +10,31 @@ from app.core.security import hash_password, hash_token
 from app.models import AuthSession, User, UserRole, UserStatus
 
 
-def test_registration_verification_admin_approval_and_sign_in(
+def test_registration_signs_in_immediately_then_session_lifecycle(
     client: TestClient,
     db_session: Session,
     csrf_headers: dict[str, str],
-    monkeypatch,
 ) -> None:
-    email_messages: list[dict[str, str]] = []
-
-    def capture_email(*, recipient: str, subject: str, action_url: str) -> None:
-        email_messages.append(
-            {"recipient": recipient, "subject": subject, "action_url": action_url}
-        )
-
-    monkeypatch.setattr("app.api.v1.auth.send_action_email", capture_email)
+    administrator_registration = client.post(
+        "/api/v1/auth/register",
+        headers=csrf_headers,
+        json={"email": "admin@example.com", "password": "correct horse battery", "role": "administrator"},
+    )
+    assert administrator_registration.status_code == 422
 
     registration = client.post(
         "/api/v1/auth/register",
         headers=csrf_headers,
-        json={"email": "staff@example.com", "password": "correct horse battery"},
+        json={"email": "staff@example.com", "password": "correct horse battery", "role": "receptionist"},
     )
-    assert registration.status_code == 202
-    assert email_messages[0]["recipient"] == "staff@example.com"
-    verification_token = parse_qs(urlparse(email_messages[0]["action_url"]).query)["token"][0]
-
-    admin = User(
-        email="admin@example.com",
-        password_hash=hash_password("administrator password"),
-        role=UserRole.ADMINISTRATOR,
-        status=UserStatus.ACTIVE,
-        email_verified=True,
-    )
-    db_session.add(admin)
-    db_session.commit()
-    db_session.refresh(admin)
-    session_token = "seeded-admin-session"
-    db_session.add(
-        AuthSession(
-            token_hash=hash_token(session_token),
-            user_id=admin.id,
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
-    )
-    db_session.commit()
-
-    verified = client.post(
-        "/api/v1/auth/verify-email",
+    assert registration.status_code == 201
+    duplicate = client.post(
+        "/api/v1/auth/register",
         headers=csrf_headers,
-        json={"token": verification_token},
+        json={"email": "staff@example.com", "password": "correct horse battery", "role": "receptionist"},
     )
-    assert verified.status_code == 200
+    assert duplicate.status_code == 409
 
-    unapproved_login = client.post(
-        "/api/v1/auth/login",
-        headers=csrf_headers,
-        json={"email": "staff@example.com", "password": "correct horse battery"},
-    )
-    assert unapproved_login.status_code == 403
-
-    client.cookies.set(settings.session_cookie_name, session_token)
-    pending = client.get("/api/v1/admin/users/pending")
-    assert pending.status_code == 200
-    assert [user["email"] for user in pending.json()] == ["staff@example.com"]
-
-    approval = client.patch(
-        f"/api/v1/admin/users/{pending.json()[0]['id']}/role",
-        headers=csrf_headers,
-        json={"role": "receptionist"},
-    )
-    assert approval.status_code == 200
-    assert approval.json()["role"] == "receptionist"
-    assert approval.json()["status"] == "active"
-
-    client.cookies.delete(settings.session_cookie_name)
     wrong_role_login = client.post(
         "/api/v1/auth/login",
         headers=csrf_headers,
@@ -106,14 +58,7 @@ def test_registration_verification_admin_approval_and_sign_in(
     )
     assert login.status_code == 200
     assert login.json()["role"] == "receptionist"
-    assert settings.session_cookie_name in client.cookies
-
-    user = db_session.scalar(select(User).where(User.email == "staff@example.com"))
-    assert user is not None
-    assert db_session.scalar(
-        select(AuthSession.id).where(AuthSession.user_id == user.id)
-    ) is not None
-    assert client.get("/api/v1/admin/users/pending").status_code == 403
+    assert client.get("/api/v1/admin/users").status_code == 404
 
     original_session = client.cookies.get(settings.session_cookie_name)
     refreshed = client.post("/api/v1/auth/refresh", headers=csrf_headers)
@@ -124,6 +69,19 @@ def test_registration_verification_admin_approval_and_sign_in(
     logout = client.post("/api/v1/auth/logout", headers=csrf_headers)
     assert logout.status_code == 200
     assert client.get("/api/v1/auth/me").status_code == 401
+
+
+def test_legacy_roleless_account_cannot_sign_in(
+    client: TestClient, csrf_headers: dict[str, str], make_user
+) -> None:
+    make_user("legacy@example.com", None, status=UserStatus.PENDING)
+    response = client.post(
+        "/api/v1/auth/login",
+        headers=csrf_headers,
+        json={"email": "legacy@example.com", "password": "correct horse battery"},
+    )
+    assert response.status_code == 403
+    assert "create a new account" in response.json()["detail"]
 
 
 def test_database_readiness_check(client: TestClient) -> None:

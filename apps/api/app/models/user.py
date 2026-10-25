@@ -1,13 +1,12 @@
 from enum import StrEnum
 
-from sqlalchemy import Boolean, Enum, String
+from sqlalchemy import Boolean, Enum, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 
 class UserRole(StrEnum):
-    ADMINISTRATOR = "administrator"
     RECEPTIONIST = "receptionist"
     HOUSEKEEPING_MANAGER = "housekeeping_manager"
     HOUSEKEEPING_STAFF = "housekeeping_staff"
@@ -34,3 +33,7 @@ class User(Base):
         nullable=False,
     )
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Housekeeping staff only: the floor a manager allocated them to and whether
+    # they are currently on shift and able to receive task offers.
+    floor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -1,22 +1,25 @@
-# Local PostgreSQL connection design
+# Dedicated local PostgreSQL connection design
 
 ## Intent
 
-Connect the FastAPI backend to the PostgreSQL 18 server already running on the developer's machine. The backend currently uses SQLAlchemy with the PostgreSQL psycopg driver and has an Alembic initial migration, but its example `app` credentials are rejected by this server and no root `.env` exists.
+Connect the FastAPI backend and React frontend to PostgreSQL without depending on the unknown password for the existing PostgreSQL 18 service. The backend uses SQLAlchemy with the PostgreSQL psycopg driver, has an Alembic initial migration, and the frontend already proxies API requests to FastAPI.
 
 ## Approach
 
-Use the existing local PostgreSQL service to create a dedicated `staff_portal` database and login via the developer's PostgreSQL administrator access. A separate Docker database is not a fit here because Docker is unavailable and PostgreSQL is already listening on port 5432.
+1. **Dedicated PostgreSQL cluster (selected):** initialize a new local PostgreSQL 18 data directory under `%LOCALAPPDATA%\StaffPortalPostgres`, listen only on `127.0.0.1:5433`, and create a `staff_portal` database/login with a fresh generated password stored only in the ignored root `.env`. Leave the existing PostgreSQL service on port 5432 and all its databases untouched. This uses installed PostgreSQL tools and doesn't require Docker or an existing administrator password.
+2. **Use the existing server:** correct the app-role password through pgAdmin, then update `.env`. This cannot be completed because the current password is unknown and there is no saved admin login.
 
 ## Goals and constraints
 
-- Configure the backend to connect to `localhost:5432/staff_portal` using the dedicated `staff_portal` login.
-- Keep the database password local in the ignored root `.env`; never request it in chat or commit it.
-- Document database/user creation in pgAdmin, migration application, and a simple connection check.
-- Preserve the existing PostgreSQL models and migration. Do not alter or drop data from other databases.
+- Configure the backend to connect to `localhost:5433/staff_portal` using the dedicated `staff_portal` login.
+- Keep a freshly generated strong database password only in the ignored root `.env` and a temporary password file during initialization; never display, request, or commit it.
+- Keep PostgreSQL bound to loopback only and retain its persistent data outside the repository.
+- Document how to start/stop the dedicated database, migrate, and start both apps.
+- Preserve the existing PostgreSQL models and migration. Do not modify the existing PostgreSQL service or its databases.
+- Start the dedicated database, run the Alembic migration, and verify database readiness before reporting the end-to-end connection as complete.
 
 ## Builder calls
 
-- The developer chooses a strong password locally and enters it into pgAdmin and `.env`.
-- Update `.env.example` and README setup instructions to reflect the local PostgreSQL server.
-- A successful SQLAlchemy connection and applied Alembic migration are the acceptance checks.
+- The user selected a separate, isolated local PostgreSQL instance.
+- Choose port 5433 because 5432 is already occupied by the existing service.
+- Run both application servers through the Vite proxy and confirm a successful database-backed API readiness check.

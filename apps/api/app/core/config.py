@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_starttls: bool = False
     smtp_from_email: str = "no-reply@example.test"
+    # Background loop that expires unanswered offers and retries unassigned tasks.
+    assignment_worker_enabled: bool = True
 
     @field_validator("cors_origins", mode="before")
     @classmethod

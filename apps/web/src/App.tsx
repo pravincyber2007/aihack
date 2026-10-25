@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import {
   Link,
   Navigate,
@@ -9,14 +9,14 @@ import {
 } from "react-router-dom";
 import { api } from "./api/client";
 import { useAuth } from "./state/AuthContext";
-import { roleLabels, type UserRole } from "./types";
+import { RoleRoute } from "./components/PortalLayout";
+import GuestPortal from "./pages/GuestPortal";
+import ManagerDashboard from "./pages/ManagerDashboard";
+import ReceptionDashboard from "./pages/ReceptionDashboard";
+import StaffDashboard from "./pages/StaffDashboard";
+import { dashboardPaths, roleLabels, type UserRole } from "./types";
 
-const roles: UserRole[] = [
-  "administrator",
-  "receptionist",
-  "housekeeping_manager",
-  "housekeeping_staff",
-];
+const roles: UserRole[] = ["housekeeping_manager", "housekeeping_staff", "receptionist"];
 
 function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -162,7 +162,6 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [selectedRole, setSelectedRole] = useState<UserRole | "">("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
@@ -178,21 +177,11 @@ function LoginPage() {
       }
       const user = await api.login(email, password, selectedRole);
       signIn(user);
-      navigate(user.role === "administrator" ? "/admin" : "/dashboard");
+      navigate(user.role ? dashboardPaths[user.role] : "/");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Sign-in failed");
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function resendVerification() {
-    setError("");
-    try {
-      const result = await api.resendVerification(email);
-      setSuccess(result.message);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not resend the link");
     }
   }
 
@@ -204,30 +193,25 @@ function LoginPage() {
       <form className="form" onSubmit={submit}>
         <Field label="Work email" type="email" value={email} onChange={setEmail} autoComplete="email" />
         <label className="field">
-          <span>Your role</span>
+          <span>Select role</span>
           <select
             className="role-select"
             value={selectedRole}
             onChange={(event) => setSelectedRole(event.target.value as UserRole | "")}
             required
           >
-            <option value="" disabled>Select your assigned role</option>
+            <option value="" disabled>Select your role</option>
             {roles.map((role) => (
               <option value={role} key={role}>{roleLabels[role]}</option>
             ))}
           </select>
-          <span className="field-hint">Your role must match the one assigned by your administrator.</span>
+          <span className="field-hint">Choose the role you selected when you created your account.</span>
         </label>
         <Field label="Password" type="password" value={password} onChange={setPassword} autoComplete="current-password" />
         <div className="form-row forgot-row">
           <Link to="/forgot-password">Forgot password?</Link>
         </div>
-        <FormFeedback error={error} success={success} />
-        {error.toLowerCase().includes("verify your email") && (
-          <button className="text-button" type="button" onClick={resendVerification}>
-            Resend verification email
-          </button>
-        )}
+        <FormFeedback error={error} success="" />
         <button className="primary-button" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
@@ -235,12 +219,18 @@ function LoginPage() {
       <p className="form-switch">
         New to the team? <Link to="/register">Create an account</Link>
       </p>
+      <div className="guest-divider"><span>or</span></div>
+      <Link className="guest-entry" to="/guest">
+        <strong>Continue as Guest</strong>
+        <span>Staying with us? Request room services with your phone number.</span>
+      </Link>
     </AuthLayout>
   );
 }
 
 function RegisterPage() {
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState<UserRole | "">("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
@@ -255,9 +245,13 @@ function RegisterPage() {
       setError("Your passwords do not match.");
       return;
     }
+    if (!role) {
+      setError("Choose your role to continue.");
+      return;
+    }
     setBusy(true);
     try {
-      const result = await api.register(email, password);
+      const result = await api.register(email, password, role);
       setSuccess(result.message);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Registration failed");
@@ -270,13 +264,30 @@ function RegisterPage() {
     <AuthLayout>
       <p className="eyebrow">Join the team</p>
       <h2>Create your account</h2>
-      <p className="muted">An administrator will assign your role after you verify your email.</p>
+      <p className="muted">Choose your role to get started.</p>
       <form className="form" onSubmit={submit}>
         <Field label="Work email" type="email" value={email} onChange={setEmail} autoComplete="email" />
+        <label className="field">
+          <span>Your role</span>
+          <select
+            className="role-select"
+            value={role}
+            onChange={(event) => setRole(event.target.value as UserRole | "")}
+            required
+          >
+            <option value="" disabled>Select your role</option>
+            {roles.map((option) => (
+              <option value={option} key={option}>{roleLabels[option]}</option>
+            ))}
+          </select>
+        </label>
         <Field label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" minLength={12} />
         <p className="field-hint">Use at least 12 characters.</p>
         <Field label="Confirm password" type="password" value={confirmation} onChange={setConfirmation} autoComplete="new-password" />
         <FormFeedback error={error} success={success} />
+        {success && !error && (
+          <Link className="text-button" to="/login">Continue to sign in</Link>
+        )}
         <button className="primary-button" disabled={busy}>
           {busy ? "Creating account…" : "Create account"}
         </button>
@@ -375,194 +386,11 @@ function ResetPasswordPage() {
   );
 }
 
-function VerifyEmailPage() {
-  const [params] = useSearchParams();
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const token = params.get("token") ?? "";
-  const requestStarted = useRef(false);
-
-  useEffect(() => {
-    if (requestStarted.current) return;
-    requestStarted.current = true;
-    if (!token) {
-      setError("This verification link is missing or invalid.");
-      return;
-    }
-    api
-      .verifyEmail(token)
-      .then((result) => setSuccess(result.message))
-      .catch((cause: unknown) =>
-        setError(cause instanceof Error ? cause.message : "Email verification failed"),
-      );
-  }, [token]);
-
-  return (
-    <AuthLayout>
-      <p className="eyebrow">Email verification</p>
-      <h2>Verify your email</h2>
-      <FormFeedback error={error} success={success} />
-      {success && <p className="form-switch"><Link to="/login">Continue to sign in</Link></p>}
-    </AuthLayout>
-  );
-}
-
-function Protected({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="loading">Loading your account…</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  return children;
-}
-
-function PortalLayout({ children }: { children: ReactNode }) {
-  const { user, signOut } = useAuth();
-  const navigate = useNavigate();
-  const [logoutError, setLogoutError] = useState("");
-
-  async function logout() {
-    try {
-      await signOut();
-      setLogoutError("");
-      navigate("/login");
-    } catch (cause) {
-      setLogoutError(
-        cause instanceof Error ? cause.message : "Could not securely sign out",
-      );
-    }
-  }
-
-  return (
-    <main className="portal-shell">
-      <header className="portal-header">
-        <Link className="brand" to="/">
-          <span className="brand-mark">S</span>
-          <span>staff<span className="brand-light"> / portal</span></span>
-        </Link>
-        <div className="profile">
-          <div>
-            <strong>{user?.email}</strong>
-            <span>{user?.role ? roleLabels[user.role] : "Staff"}</span>
-          </div>
-          <button className="quiet-button" onClick={logout}>Sign out</button>
-        </div>
-      </header>
-      {logoutError && (
-        <p className="feedback error logout-error" role="alert">{logoutError}</p>
-      )}
-      <section className="portal-content">{children}</section>
-    </main>
-  );
-}
-
-function DashboardPage() {
-  const { user } = useAuth();
-  return (
-    <PortalLayout>
-      <p className="eyebrow">Staff portal</p>
-      <h1>Good to have you here.</h1>
-      <p className="muted">
-        You’re signed in as {user?.role ? roleLabels[user.role].toLowerCase() : "a team member"}.
-        Your workspace is ready for the next step.
-      </p>
-      <div className="welcome-card">
-        <span className="welcome-icon">✦</span>
-        <div><strong>Your team, in one place</strong><p>Staff tools and hotel workflows can be added here.</p></div>
-      </div>
-    </PortalLayout>
-  );
-}
-
-function AdminPage() {
-  const [users, setUsers] = useState<Awaited<ReturnType<typeof api.pendingUsers>>>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<number | null>(null);
-
-  async function loadUsers() {
-    setError("");
-    try {
-      setUsers(await api.pendingUsers());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load pending accounts");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadUsers();
-  }, []);
-
-  async function assign(userId: number, role: UserRole) {
-    setBusyId(userId);
-    setError("");
-    try {
-      await api.assignRole(userId, role);
-      setUsers((current) => current.filter((user) => user.id !== userId));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not assign role");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  return (
-    <Protected>
-      <PortalLayout>
-        <p className="eyebrow">Administration</p>
-        <h1>Review staff accounts</h1>
-        <p className="muted">Only verified accounts appear here. Assign the right role to activate access.</p>
-        <FormFeedback error={error} success="" />
-        {loading ? (
-          <div className="empty-state">Loading pending accounts…</div>
-        ) : users.length === 0 ? (
-          <div className="empty-state">No verified accounts are waiting for approval.</div>
-        ) : (
-          <div className="user-list">
-            {users.map((user) => (
-              <article className="user-row" key={user.id}>
-                <div className="user-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
-                <div className="user-details">
-                  <strong>{user.email}</strong>
-                  <span>Email verified · waiting for approval</span>
-                </div>
-                <label className="role-control">
-                  <span className="sr-only">Role for {user.email}</span>
-                  <select
-                    defaultValue=""
-                    disabled={busyId === user.id}
-                    onChange={(event) => {
-                      if (event.target.value) void assign(user.id, event.target.value as UserRole);
-                    }}
-                  >
-                    <option value="" disabled>Assign role…</option>
-                    {roles.map((role) => (
-                      <option value={role} key={role}>{roleLabels[role]}</option>
-                    ))}
-                  </select>
-                </label>
-              </article>
-            ))}
-          </div>
-        )}
-      </PortalLayout>
-    </Protected>
-  );
-}
-
-function AdminRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="loading">Loading your account…</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== "administrator") return <Navigate to="/dashboard" replace />;
-  return <AdminPage />;
-}
-
 function HomeRoute() {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading">Loading your account…</div>;
   if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === "administrator" ? "/admin" : "/dashboard"} replace />;
+  return <Navigate to={user.role ? dashboardPaths[user.role] : "/login"} replace />;
 }
 
 export default function App() {
@@ -573,9 +401,11 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route path="/verify-email" element={<VerifyEmailPage />} />
-      <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
-      <Route path="/admin" element={<AdminRoute />} />
+      <Route path="/guest" element={<GuestPortal />} />
+      <Route path="/manager" element={<RoleRoute role="housekeeping_manager"><ManagerDashboard /></RoleRoute>} />
+      <Route path="/staff" element={<RoleRoute role="housekeeping_staff"><StaffDashboard /></RoleRoute>} />
+      <Route path="/reception" element={<RoleRoute role="receptionist"><ReceptionDashboard /></RoleRoute>} />
+      <Route path="/dashboard" element={<HomeRoute />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

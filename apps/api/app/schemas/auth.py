@@ -14,7 +14,7 @@ class Credentials(BaseModel):
 
 
 class Registration(Credentials):
-    pass
+    role: UserRole
 
 
 class LoginRequest(Credentials):
@@ -44,6 +44,8 @@ class UserResponse(BaseModel):
     role: UserRole | None
     status: UserStatus
     email_verified: bool
+    floor: int | None = None
+    is_available: bool = False
 
     model_config = {"from_attributes": True}
 
